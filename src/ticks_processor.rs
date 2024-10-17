@@ -1,33 +1,40 @@
-use crate::config::ROTATE_SPEED;
+use crate::config::{MAX_DEPTH, ROTATE_SPEED};
 use crate::rules::{should_decay, should_spawn};
 
 use crate::types::RotateTimer;
 use crate::{
-    config::{ALIVE_COLOR, DEAD_COLOR, DECAY_TICKS, MAX_HEIGHT, MAX_WIDTH},
+    config::{alive_color, DEAD_COLOR, DECAY_TICKS, MAX_HEIGHT, MAX_WIDTH},
     types::{Board, FrameTimer, Position},
 };
 
 use bevy::prelude::*;
-use std::cmp;
 
-/**
- * Returns a range that is limited to the positive range of \[0, max\]
- */
-fn limited_positive_range(start: usize, end: usize, max: usize) -> std::ops::Range<usize> {
-    return cmp::max(start, 0)..cmp::min(end + 1, max);
-}
+fn count_cell_neighbors(board: &mut ResMut<Board>, x: usize, y: usize, z: usize) {
+    let compare_xyz: Vec<(i32, i32, i32)> = vec![
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        (-1, 0, 0),
+        (0, -1, 0),
+        (0, 0, -1),
+    ];
+    board.0[x][y][z].neighbors = 0;
+    for xyz in compare_xyz {
+        let adjacent_x = x as i32 + xyz.0;
+        if adjacent_x < 0 || adjacent_x >= MAX_WIDTH as i32 {
+            continue;
+        }
+        let adjacent_y = y as i32 + xyz.1;
+        if adjacent_y < 0 || adjacent_y >= MAX_HEIGHT as i32 {
+            continue;
+        }
+        let adjacent_z = z as i32 + xyz.2;
+        if adjacent_z < 0 || adjacent_z >= MAX_DEPTH as i32 {
+            continue;
+        }
 
-fn count_cell_neighbors(board: &mut ResMut<Board>, x: usize, y: usize) {
-    board.0[x][y].neighbors = 0;
-    for adjacent_x in limited_positive_range(x - 1, x + 1, MAX_WIDTH) {
-        for adjacent_y in limited_positive_range(y - 1, y + 1, MAX_HEIGHT) {
-            if adjacent_x == x && adjacent_y == y {
-                continue;
-            }
-
-            if !board.0[adjacent_x][adjacent_y].dead {
-                board.0[x][y].neighbors += 1;
-            }
+        if !board.0[adjacent_x as usize][adjacent_y as usize][adjacent_z as usize].dead {
+            board.0[x][y][z].neighbors += 1;
         }
     }
 }
@@ -35,7 +42,9 @@ fn count_cell_neighbors(board: &mut ResMut<Board>, x: usize, y: usize) {
 fn count_neighbors(board: &mut ResMut<Board>) {
     for x in 0..MAX_WIDTH {
         for y in 0..MAX_HEIGHT {
-            count_cell_neighbors(board, x, y);
+            for z in 0..MAX_DEPTH {
+                count_cell_neighbors(board, x, y, z);
+            }
         }
     }
 }
@@ -47,23 +56,26 @@ fn spawn_cells(
 ) {
     for x in 0..MAX_WIDTH {
         for y in 0..MAX_HEIGHT {
-            let cell = &mut board.0[x][y];
-            if !cell.dead {
-                continue;
-            }
+            for z in 0..MAX_DEPTH {
+                let cell = &mut board.0[x][y][z];
+                if !cell.dead {
+                    continue;
+                }
 
-            if should_spawn(cell.neighbors) {
-                cell.decaying = false;
-                cell.dead = false;
-                cell.decaying_ticks = DECAY_TICKS;
-                let (material_handle, _) = material_handles
-                    .iter_mut()
-                    .find(|(_, position)| -> bool {
-                        return position.x == x && position.y == y;
-                    })
-                    .expect("Cell sprite not found");
-                if let Some(material) = materials.get_mut(material_handle) {
-                    material.base_color = ALIVE_COLOR;
+                if should_spawn(cell.neighbors) {
+                    cell.decaying = false;
+                    cell.dead = false;
+                    cell.decaying_ticks = DECAY_TICKS;
+                    let (material_handle, _) = material_handles
+                        .iter_mut()
+                        .find(|(_, position)| -> bool {
+                            return position.x == x && position.y == y && position.z == z;
+                        })
+                        .expect("Cell sprite not found");
+                    if let Some(material) = materials.get_mut(material_handle) {
+                        let color = alive_color(z);
+                        material.base_color = color;
+                    }
                 }
             }
         }
@@ -73,12 +85,14 @@ fn spawn_cells(
 fn decay_cells(board: &mut ResMut<Board>) {
     for x in 0..MAX_WIDTH {
         for y in 0..MAX_HEIGHT {
-            let cell = &mut board.0[x][y];
-            if (should_decay(cell.neighbors)) && !cell.decaying {
-                cell.decaying = true;
-            }
-            if cell.decaying && cell.decaying_ticks > 0 {
-                cell.decaying_ticks -= 1;
+            for z in 0..MAX_DEPTH {
+                let cell = &mut board.0[x][y][z];
+                if (should_decay(cell.neighbors)) && !cell.decaying {
+                    cell.decaying = true;
+                }
+                if cell.decaying && cell.decaying_ticks > 0 {
+                    cell.decaying_ticks -= 1;
+                }
             }
         }
     }
@@ -91,20 +105,22 @@ fn kill_cells(
 ) {
     for x in 0..MAX_WIDTH {
         for y in 0..MAX_HEIGHT {
-            let cell = &mut board.0[x][y];
-            if cell.dead {
-                continue;
-            }
-            if cell.decaying && cell.decaying_ticks == 0 {
-                cell.dead = true;
-                let (material_handle, _) = material_handles
-                    .iter_mut()
-                    .find(|(_, position)| -> bool {
-                        return position.x == x && position.y == y;
-                    })
-                    .expect("Material not found");
-                if let Some(material) = materials.get_mut(material_handle) {
-                    material.base_color = DEAD_COLOR;
+            for z in 0..MAX_DEPTH {
+                let cell = &mut board.0[x][y][z];
+                if cell.dead {
+                    continue;
+                }
+                if cell.decaying && cell.decaying_ticks == 0 {
+                    cell.dead = true;
+                    let (material_handle, _) = material_handles
+                        .iter_mut()
+                        .find(|(_, position)| -> bool {
+                            return position.x == x && position.y == y && position.z == z;
+                        })
+                        .expect("Material not found");
+                    if let Some(material) = materials.get_mut(material_handle) {
+                        material.base_color = DEAD_COLOR;
+                    }
                 }
             }
         }

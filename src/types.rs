@@ -19,7 +19,7 @@ impl Default for Cell {
 }
 
 #[derive(Resource)]
-pub struct Board(pub Vec<Vec<Cell>>);
+pub struct Board(pub Vec<Vec<Vec<Cell>>>);
 
 #[derive(Component, Debug)]
 pub struct Position {
